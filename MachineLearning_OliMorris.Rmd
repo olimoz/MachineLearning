@@ -1,0 +1,269 @@
+---
+output: html_document
+---
+##Machine Learning Assignment
+###Qualitative Activity Recognition of Weight Lifting Exercises###
+
+**Author: Oliver Morris. Date: September 2015**
+
+##Executive Summary
+
+This report investigates data resulting from an experiment into the  classification of weight lifting exercises (Velloso, E. et al, 2013). These exercises were performed by people instructed to perform lifting exercises in one correct manner, and four incorrect manners.
+
+The report finds two types of data available from the experiment and proceeds to explore classification models and the ways in which those models can be tuned.
+
+The most accurate model is found to be a random forest, involving 500 trees but reporting only 2 misclassifications in 1000 observations. A notable mention is made of the quadratic discriminant analysis which achieves high accuracy despite taking only 0.5% of the processor time to construct when compared with a random forest. 
+
+##Investigation of the Experiment Data
+
+The training set is 19,622 accelerometer and gyroscope observations, taken at approx 50 observations per second (50Hz). There are 160 columns, with the last being the outcome 'Class'. Class 'A' is a correctly performed lift, B to E are incorrectly performed. There are two types of record in the data, as distinguished by the 'new_window' flag being either "yes" or "no". Records with "yes" include a number of averages taken over the previous one second of measurements. Those with "no", exclude these averages.
+
+**Arrangement of Equipment in Experiment (Velloso, E. et al, 2013)**
+
+![s ](C:\Users\Oliver\Documents\0_OM\Training\R\R_MachineLearning\Project\AccelerometerLocations.png)
+
+**Importing the Data**
+
+The data was reviewed and all complete columns were selected for the raw data (where 'new_window' is flagged 'no'). The 1s average data (flagged 'yes') includes all columns populated only for the 1s average. Both sets exclude columns which are of no interest to any model, such as the name of the tester and the clock time of the measurement.
+
+```{r, echo=TRUE}
+## Load the training data
+dat <- read.csv("pml-training.csv")
+
+## Manually select columns for each data group, with outcome 'classe' in first column
+cols_RAW <- c(160,7,8,9,10,11,37,38,39,40,41,42,43,44,45,46,47,48,49,60,
+              61,62,63,64,65,66,67,68,84,85,86,102,113,114,115,116,117,118,
+              119,120,121,122,123,124,140,151,152,153,154,155,156,157,158,159)
+dat_RAW <- dat[,cols_RAW]
+
+## Ensure all rows are complete and all numeric columns are indeed numeric, not factors
+## except the outcome 'classe', which is column 1.
+dat_RAW <- dat_RAW[complete.cases(dat_RAW),]
+for(i in c(2:ncol(dat_RAW))) {
+  dat_RAW[,i] <- as.numeric(dat_RAW[,i])
+}
+############################################################
+## Repeat process for the 1s average data rows.
+############################################################
+## Manually select columns for each data group, with outcome 'classe' in first column
+cols_1sAvg <-c (160,7,8,9,10,11,12,15,18,19,20,21,22,23,24,25,26,
+                27,28,29,30,31,32,33,34,35,36,50,51,52,53,54,55,56,
+                57,58,59,69,72,75,76,77,78,79,80,81,82,83,87,88,90,
+                91,93,94,95,96,97,98,99,100,101,103,104,105,106,107,
+                108,109,110,111,112,125,126,128,129,131,132,133,134,
+                135,136,137,138,139,141,142,143,144,145,146,147,148,
+                149,150)
+dat_1sAvg <- dat[dat$new_window=="yes",cols_1sAvg]
+
+## Ensure all rows are complete and all numeric columns are indeed numeric, not factors, 
+## except the outcome 'classe', which is column 1.
+dat_1sAvg <- dat_1sAvg[complete.cases(dat_1sAvg),]
+for(i in c(2:ncol(dat_1sAvg))) {
+  dat_1sAvg[,i] <- as.numeric(dat_1sAvg[,i])
+}
+
+```
+
+**Visualising the Data**
+
+Such a large number of predictors is not easily visualised. However, all the accelerometers share a calibrated orientation, i.e. the x, y, z, orientation is the same for each. This implies that the data can be visualised by combining all x values, y values and z values for a given observation using Principal Component Analysis, resulting in a single x,y,z for each observation. The same could also be done for rotational movement; roll, pitch and yaw. This approach to visualisation is shown below, where colours represent classes: Red=A, Green=B, Blue=C, Yellow=D, Purple=E
+
+```{r, echo=TRUE, message=F, warning=F}
+require(caret)
+
+##Select columns relevant to translational movement in x, y, z
+cols_x <- c(157,154,151,119,116,113,66,63,60,43,40,37)
+cols_y <- c(158,155,152,120,117,114,67,64,61,44,41,38)
+cols_z <- c(159,156,153,121,118,115,68,65,62,45,42,39)
+
+##Select columns relevant to rotational movement in roll, pitch, yaw
+cols_roll <- c(122,84,46,8)
+cols_pitch <- c(123,85,47,9)
+cols_yaw <- c(124,86,48,10)
+
+## Create function to parse the columns and reduce them to one principal component
+## this single component will be; x, y or z; roll, pitch or yaw.
+unify <- function(columnlist, rawdata)
+  {
+    dat_axis <- rawdata[,columnlist]
+    for(j in c(1:ncol(dat_axis))) {
+      dat_axis[,j] <- as.numeric(dat_axis[,j])
+    }
+    preProc_axis <- preProcess(dat_axis, method=c("pca"), pcaComp = 1)
+    result <- predict(preProc_axis, dat_axis)
+    return(result)
+}
+
+##Create a table of classe,x,y,z 
+unified_translate <- cbind(dat[,160], unify(cols_x, dat),unify(cols_y, dat),unify(cols_z, dat))
+names(unified_translate) <- paste(c("classe", "x","y","z"))
+
+##Create a table of classe, roll, pitch, yaw movements
+unified_rotate <- cbind(dat[,160], unify(cols_roll, dat),unify(cols_pitch, dat),unify(cols_yaw, dat))
+names(unified_rotate) <- paste(c("classe","roll","pitch","yaw"))
+
+##Change levels to colours for plotting
+levels(unified_translate$classe) <- c("red","green","blue","yellow","purple")
+levels(unified_rotate$classe) <- c("red","green","blue","yellow","purple")
+
+##Present the results using the scatterplot3d package
+require(scatterplot3d)
+par(mfrow=c(1,2))
+with(unified_translate, {
+  scatterplot3d(x, y, z, angle=30, color=classe, pch=20, 
+                main="Translational Data. Coloured by Class")
+})
+with(unified_rotate, {
+  scatterplot3d(roll, pitch, yaw, angle=30, color=classe, pch=20, 
+                main="Rotational Data. Coloured by Class")
+})
+```
+
+The visualisation shows some grouping, but also shows how intermixed the classes are. Classificaiton will not be simple. No further attempt was made to visualise the data.
+
+##Investigation of Classification Models
+
+Generating the models was done by simply changing the method of the train function in caret. For example, below is the code used to generate the most accurate model, a random forest.
+
+**Cross Validation**
+
+5 fold cross validation has been applied to every model. This means the data is sampled 5 times (i.e. 5 folds). Each fold sends 80% of the data to training, 20% to test (as this is 5 fold). This results in the model being trained and tested 5 times with slightly different data on each occassion. Having trained and tested the model against multiple samples, the resulting accuracies are averaged. So quoted accuracy for the model better represents the 'out of sample' error. Note, the trainControl object was set to classProbs = TRUE and savePredictions = TRUE so that the predictions vs the observations could be inspected for each fold. 
+
+```{r, echo=TRUE, eval=FALSE}
+## Load the library
+require(caret)
+
+## Establish pre processing rules, as used in some models
+preProc_RAW <- preProcess(dat_RAW[,2:ncol(dat_RAW)], 
+                          method=c("center","scale","pca"), thresh=0.9)
+
+## Establish cross validation using 5 folds
+train_control <- trainControl(method="cv", number=5, classProbs = TRUE,
+                              savePredictions=TRUE)
+
+## Attempt Random Forest For RAW - NB, this model does NOT use preprocessed data.
+modFit_RAW_rf_cv5 <- train(classe ~ ., method = "rf", data=dat_RAW, 
+                           trControl = train_control)
+```
+
+## Model Results
+
+A number of other models were tested, both for the 'raw data' and the '1s average data'. The below table shows the effect on accuracy and build time of pre processing. For example, reducing components (use of PCA), and centering/scaling the data. 
+
+| Model  Ref | Data | Model | caret  model | Center  + Scale? | Use of PCA? | Predictor Columns | User time  to Build  Model (s) | Accuracy | Kappa |
+|------------|--------|----------------------------------------|--------------|:----------------:|:-----------:|:-----------------:|-------------------------------:|----------|--------|
+| A | Raw | Tree | rpart | Yes | No | 53 | 12.42 | 55.31% | 42.93% |
+| B | Raw | Support Vector Machine (Linear Kernal) | svml | Yes | No | 53 | 517.60 | 70.19% | 61.98% |
+| C | Raw | Linear Discriminant Analysis | lda | No | No | 53 | 5.23 | 71.23% | 63.59% |
+| D | Raw | Quadratic Discriminant Analysis | qda | No | No | 53 | 4.57 | 89.59% | 86.85% |
+| E | Raw | Random Forest | rf | Yes | 90% | 19 | 575.61 | 98.00% | 97.47% |
+| F | Raw | Random Forest | rf | Yes | 99% | 37 | 827.30 | 98.49% | 98.09% |
+| G | Raw | Random Forest | rf | Yes | No | 53 | 871.08 | 99.65% | 99.56% |
+| H | Raw | Random Forest | rf | No | No | 53 | 1165.51 | 99.83% | 99.79% |
+| I | 1s Avg | Linear Discriminant Analysis | lda | No | No | 93 | 1.39 | 65.52% | 56.53% |
+| J | 1s Avg | Random Forest | rf | No | No | 93 | 29.69 | 82.76% | 78.16% |
+
+The random forest model with no preprocessing is easily the most accurate for both data sets. 
+
+However, this model takes approx 20mins to build (Intel Xeon E3-1220 v3 @3.1GHz) using all 19,622 observations and 53 predictors. Applying PCA to reduce the predictors from 53 to 19 halves the build time. Such use of PCA removes 10% of the variance in the data, reducing accuracy from 99.8% to 98.0%. This may not sound much, but it means the error rate rises an order of magnitude from 2/1000 to 20/1000.
+
+When the random forest model is applied to the 1s average data, it correctly classifies 83% of observations. This model is trained on only 325 observations, as opposed to 15,700 for the raw data. This implies there is scope for vastly reducing the amount of data which need be analysed for the creation of a usefully accurate model. This could be good news if the data needs to be sent over wireless or the internet.
+
+The quadratic discriminant analysis deserves special mention because it correctly classifies nearly 90% of observations using a model built in less than 5s.
+
+**Out of Sample Error**
+
+Since cross validation has been used to build the model, the out of sample error for the random forest model is: 
+
+  1-Accuracy = 100% - 99.84% = 0.16%
+  
+This is approximately 2 misclassification errors per 1000 lifts.
+
+**Results of Random Forest Model**
+
+```{r, echo=TRUE, eval=FALSE}
+## Report on random forest model results
+modFit_RAW_rf_cv5
+```
+```{r, echo=TRUE, eval=FALSE}
+  Random Forest 
+  
+  19622 samples
+     53 predictor
+      5 classes: 'A', 'B', 'C', 'D', 'E' 
+  
+  No pre-processing
+  Resampling: Cross-Validated (5 fold) 
+  Summary of sample sizes: 15698, 15698, 15696, 15698, 15698 
+  Resampling results across tuning parameters:
+  
+    mtry  Accuracy   Kappa      Accuracy SD   Kappa SD    
+     2    0.9960249  0.9949719  0.0006882599  0.0008706966
+    27    0.9984201  0.9980017  0.0006085086  0.0007696841
+    53    0.9959739  0.9949071  0.0020018716  0.0025326706
+  
+  Accuracy was used to select the optimal model using  the largest value.
+  The final value used for the model was mtry = 27. 
+```
+  
+```{r, echo=TRUE, eval=FALSE}
+## Display confusion matrix
+modFit_RAW_rf_cv5$finalModel
+``` 
+```{r, echo=TRUE, eval=FALSE}
+   Call:
+   randomForest(x = x, y = y, mtry = param$mtry) 
+                 Type of random forest: classification
+                       Number of trees: 500
+  No. of variables tried at each split: 27
+  
+          OOB estimate of  error rate: 0.14%
+  Confusion matrix:
+       A    B    C    D    E  class.error
+  A 5578    1    0    0    1 0.0003584229
+  B    5 3789    2    1    0 0.0021069265
+  C    0    4 3418    0    0 0.0011689071
+  D    0    0   10 3205    1 0.0034203980
+  E    0    0    0    3 3604 0.0008317161
+```
+
+```{r, echo=TRUE, eval=FALSE}
+## Out of sample error
+modFit_RAW_rf_cv5$pred
+```
+```{r, echo=TRUE, eval=FALSE}
+
+```
+
+```{r, echo=TRUE, eval=FALSE}
+## Plot learning curve for random forest
+plot(modFit_RAW_rf_cv5$finalModel, 
+     main="Random Forest Learning Curve. Error vs No. Trees")
+```
+
+![](C:\Users\Oliver\Documents\0_OM\Training\R\R_MachineLearning\Project\RandomForestLearningCurve.png)
+
+## Predictions for Test Data
+
+A sample of 20 records has been provided for testing. Below are the predicted classifications provided by the random forest model.
+
+```{r, echo=TRUE, eval=FALSE}
+## Load the test data
+dat_test <- read.csv("pml-testing.csv")
+
+## Process, as per the raw training data
+dat_Ex1sAvg_test <- dat_test[,cols_Ex1sAvg]
+for(i in c(2:ncol(dat_Ex1sAvg_test))) {
+  dat_Ex1sAvg_test[,i] <- as.numeric(dat_Ex1sAvg_test[,i])
+}
+## Create predictions using the selected model
+pred <- predict(modFit_Ex1sAvg_rf_cv5,dat_Ex1sAvg_test)
+```
+
+```{r, echo=TRUE, eval=FALSE}
+  [1] B A B A A E D B A A B C B A E E A B B B
+  Levels: A B C D E
+```
+## References
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
